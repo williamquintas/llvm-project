@@ -4187,6 +4187,16 @@ KnownBits SelectionDAG::computeKnownBits(SDValue Op, const APInt &DemandedElts,
     // All bits are zero except the low bit.
     Known.Zero.setBitsFrom(1);
     break;
+  case ISD::VECREDUCE_ADD: {
+    EVT SrcVT = Op.getOperand(0).getValueType();
+    if (SrcVT.isFixedLengthVector()) {
+      // Reductions operate at element width; promoted result bits are undefined.
+      Known = computeKnownBits(Op.getOperand(0), Depth + 1)
+                  .reduceAdd(SrcVT.getVectorNumElements())
+                  .anyextOrTrunc(BitWidth);
+    }
+    break;
+  }
   case ISD::ADD: {
     SDNodeFlags Flags = Op.getNode()->getFlags();
     Known = computeKnownBits(Op.getOperand(0), DemandedElts, Depth + 1);

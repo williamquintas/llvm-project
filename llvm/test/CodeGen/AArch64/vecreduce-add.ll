@@ -514,9 +514,9 @@ entry:
 define zeroext i16 @add_v16i8_v16i16_zext(<16 x i8> %x) {
 ; CHECK-SD-LABEL: add_v16i8_v16i16_zext:
 ; CHECK-SD:       // %bb.0: // %entry
-; CHECK-SD-NEXT:    uaddlp v0.8h, v0.16b
-; CHECK-SD-NEXT:    addv h0, v0.8h
-; CHECK-SD-NEXT:    fmov w0, s0
+; CHECK-SD-NEXT:    uaddlv h0, v0.16b
+; CHECK-SD-NEXT:    fmov w8, s0
+; CHECK-SD-NEXT:    and w0, w8, #0xfff
 ; CHECK-SD-NEXT:    ret
 ;
 ; CHECK-GI-LABEL: add_v16i8_v16i16_zext:
@@ -554,9 +554,9 @@ entry:
 define zeroext i16 @add_v8i8_v8i16_zext(<8 x i8> %x) {
 ; CHECK-SD-LABEL: add_v8i8_v8i16_zext:
 ; CHECK-SD:       // %bb.0: // %entry
-; CHECK-SD-NEXT:    ushll v0.8h, v0.8b, #0
-; CHECK-SD-NEXT:    addv h0, v0.8h
-; CHECK-SD-NEXT:    fmov w0, s0
+; CHECK-SD-NEXT:    uaddlv h0, v0.8b
+; CHECK-SD-NEXT:    fmov w8, s0
+; CHECK-SD-NEXT:    and w0, w8, #0x7ff
 ; CHECK-SD-NEXT:    ret
 ;
 ; CHECK-GI-LABEL: add_v8i8_v8i16_zext:
@@ -3000,7 +3000,8 @@ define zeroext i16 @add_pair_v16i8_v16i16_zext(<16 x i8> %x, <16 x i8> %y) {
 ; CHECK-SD-NEXT:    uaddlp v1.8h, v1.16b
 ; CHECK-SD-NEXT:    uadalp v1.8h, v0.16b
 ; CHECK-SD-NEXT:    addv h0, v1.8h
-; CHECK-SD-NEXT:    fmov w0, s0
+; CHECK-SD-NEXT:    fmov w8, s0
+; CHECK-SD-NEXT:    and w0, w8, #0x1fff
 ; CHECK-SD-NEXT:    ret
 ;
 ; CHECK-GI-LABEL: add_pair_v16i8_v16i16_zext:
@@ -3055,7 +3056,8 @@ define zeroext i16 @add_pair_v8i8_v8i16_zext(<8 x i8> %x, <8 x i8> %y) {
 ; CHECK-SD-NEXT:    // kill: def $d1 killed $d1 def $q1
 ; CHECK-SD-NEXT:    mov v0.d[1], v1.d[0]
 ; CHECK-SD-NEXT:    uaddlv h0, v0.16b
-; CHECK-SD-NEXT:    umov w0, v0.h[0]
+; CHECK-SD-NEXT:    umov w8, v0.h[0]
+; CHECK-SD-NEXT:    and w0, w8, #0xfff
 ; CHECK-SD-NEXT:    ret
 ;
 ; CHECK-GI-LABEL: add_pair_v8i8_v8i16_zext:
@@ -4860,3 +4862,192 @@ declare i64 @llvm.vector.reduce.add.v4i64(<4 x i64>)
 declare i64 @llvm.vector.reduce.add.v8i64(<8 x i64>)
 declare i8 @llvm.vector.reduce.add.v16i8(<16 x i8>)
 declare i8 @llvm.vector.reduce.add.v8i8(<8 x i8>)
+
+; The scalar mask is redundant once the reduction's upper bits are known.
+define i32 @reduce_add_known_zeroes(<4 x i32> %x) {
+; CHECK-SD-LABEL: reduce_add_known_zeroes:
+; CHECK-SD:       // %bb.0:
+; CHECK-SD-NEXT:    movi v1.2d, #0x0000ff000000ff
+; CHECK-SD-NEXT:    and v0.16b, v0.16b, v1.16b
+; CHECK-SD-NEXT:    addv s0, v0.4s
+; CHECK-SD-NEXT:    fmov w0, s0
+; CHECK-SD-NEXT:    ret
+;
+; CHECK-GI-LABEL: reduce_add_known_zeroes:
+; CHECK-GI:       // %bb.0:
+; CHECK-GI-NEXT:    movi v1.2d, #0x0000ff000000ff
+; CHECK-GI-NEXT:    and v0.16b, v0.16b, v1.16b
+; CHECK-GI-NEXT:    addv s0, v0.4s
+; CHECK-GI-NEXT:    fmov w8, s0
+; CHECK-GI-NEXT:    and w0, w8, #0x3ff
+; CHECK-GI-NEXT:    ret
+  %masked = and <4 x i32> %x, splat (i32 255)
+  %sum = call i32 @llvm.vector.reduce.add.v4i32(<4 x i32> %masked)
+  %result = and i32 %sum, 1023
+  ret i32 %result
+}
+
+; All lanes, including the lane with the largest mask, contribute to the sum.
+define i32 @reduce_add_different_lanes(<4 x i32> %x) {
+; CHECK-SD-LABEL: reduce_add_different_lanes:
+; CHECK-SD:       // %bb.0:
+; CHECK-SD-NEXT:    adrp x8, .LCPI139_0
+; CHECK-SD-NEXT:    ldr q1, [x8, :lo12:.LCPI139_0]
+; CHECK-SD-NEXT:    and v0.16b, v0.16b, v1.16b
+; CHECK-SD-NEXT:    addv s0, v0.4s
+; CHECK-SD-NEXT:    fmov w0, s0
+; CHECK-SD-NEXT:    ret
+;
+; CHECK-GI-LABEL: reduce_add_different_lanes:
+; CHECK-GI:       // %bb.0:
+; CHECK-GI-NEXT:    adrp x8, .LCPI139_0
+; CHECK-GI-NEXT:    ldr q1, [x8, :lo12:.LCPI139_0]
+; CHECK-GI-NEXT:    and v0.16b, v0.16b, v1.16b
+; CHECK-GI-NEXT:    addv s0, v0.4s
+; CHECK-GI-NEXT:    fmov w8, s0
+; CHECK-GI-NEXT:    and w0, w8, #0x3f
+; CHECK-GI-NEXT:    ret
+  %masked = and <4 x i32> %x, <i32 1, i32 3, i32 7, i32 15>
+  %sum = call i32 @llvm.vector.reduce.add.v4i32(<4 x i32> %masked)
+  %result = and i32 %sum, 63
+  ret i32 %result
+}
+
+define i32 @reduce_add_known_ones(<4 x i32> %x) {
+; CHECK-SD-LABEL: reduce_add_known_ones:
+; CHECK-SD:       // %bb.0:
+; CHECK-SD-NEXT:    mvni v1.4s, #7
+; CHECK-SD-NEXT:    orr v0.16b, v0.16b, v1.16b
+; CHECK-SD-NEXT:    addv s0, v0.4s
+; CHECK-SD-NEXT:    fmov w0, s0
+; CHECK-SD-NEXT:    ret
+;
+; CHECK-GI-LABEL: reduce_add_known_ones:
+; CHECK-GI:       // %bb.0:
+; CHECK-GI-NEXT:    mvni v1.4s, #7
+; CHECK-GI-NEXT:    orr v0.16b, v0.16b, v1.16b
+; CHECK-GI-NEXT:    addv s0, v0.4s
+; CHECK-GI-NEXT:    fmov w8, s0
+; CHECK-GI-NEXT:    orr w0, w8, #0xffffffe0
+; CHECK-GI-NEXT:    ret
+  %negative = or <4 x i32> %x, splat (i32 -8)
+  %sum = call i32 @llvm.vector.reduce.add.v4i32(<4 x i32> %negative)
+  %result = or i32 %sum, -32
+  ret i32 %result
+}
+
+; Overflow prevents inferring that the sign bit is clear.
+define i32 @reduce_add_may_overflow(<4 x i32> %x) {
+; CHECK-SD-LABEL: reduce_add_may_overflow:
+; CHECK-SD:       // %bb.0:
+; CHECK-SD-NEXT:    bic v0.4s, #128, lsl #24
+; CHECK-SD-NEXT:    addv s0, v0.4s
+; CHECK-SD-NEXT:    fmov w8, s0
+; CHECK-SD-NEXT:    and w0, w8, #0x7fffffff
+; CHECK-SD-NEXT:    ret
+;
+; CHECK-GI-LABEL: reduce_add_may_overflow:
+; CHECK-GI:       // %bb.0:
+; CHECK-GI-NEXT:    mvni v1.4s, #128, lsl #24
+; CHECK-GI-NEXT:    and v0.16b, v0.16b, v1.16b
+; CHECK-GI-NEXT:    addv s0, v0.4s
+; CHECK-GI-NEXT:    fmov w8, s0
+; CHECK-GI-NEXT:    and w0, w8, #0x7fffffff
+; CHECK-GI-NEXT:    ret
+  %masked = and <4 x i32> %x, splat (i32 2147483647)
+  %sum = call i32 @llvm.vector.reduce.add.v4i32(<4 x i32> %masked)
+  %result = and i32 %sum, 2147483647
+  ret i32 %result
+}
+
+define i32 @reduce_add_same_constant() {
+; CHECK-SD-LABEL: reduce_add_same_constant:
+; CHECK-SD:       // %bb.0:
+; CHECK-SD-NEXT:    mov w0, #12 // =0xc
+; CHECK-SD-NEXT:    ret
+;
+; CHECK-GI-LABEL: reduce_add_same_constant:
+; CHECK-GI:       // %bb.0:
+; CHECK-GI-NEXT:    movi v0.4s, #3
+; CHECK-GI-NEXT:    addv s0, v0.4s
+; CHECK-GI-NEXT:    fmov w0, s0
+; CHECK-GI-NEXT:    ret
+  %sum = call i32 @llvm.vector.reduce.add.v4i32(<4 x i32> splat (i32 3))
+  ret i32 %sum
+}
+
+define i32 @reduce_add_different_constants() {
+; CHECK-SD-LABEL: reduce_add_different_constants:
+; CHECK-SD:       // %bb.0:
+; CHECK-SD-NEXT:    mov w0, #26 // =0x1a
+; CHECK-SD-NEXT:    ret
+;
+; CHECK-GI-LABEL: reduce_add_different_constants:
+; CHECK-GI:       // %bb.0:
+; CHECK-GI-NEXT:    adrp x8, .LCPI143_0
+; CHECK-GI-NEXT:    ldr q0, [x8, :lo12:.LCPI143_0]
+; CHECK-GI-NEXT:    addv s0, v0.4s
+; CHECK-GI-NEXT:    fmov w0, s0
+; CHECK-GI-NEXT:    ret
+  %sum = call i32 @llvm.vector.reduce.add.v4i32(<4 x i32> <i32 1, i32 3, i32 7, i32 15>)
+  ret i32 %sum
+}
+
+; Constant reductions retain the element width's modular arithmetic.
+define i8 @reduce_add_constant_overflow() {
+; CHECK-SD-LABEL: reduce_add_constant_overflow:
+; CHECK-SD:       // %bb.0:
+; CHECK-SD-NEXT:    mov w0, #248 // =0xf8
+; CHECK-SD-NEXT:    ret
+;
+; CHECK-GI-LABEL: reduce_add_constant_overflow:
+; CHECK-GI:       // %bb.0:
+; CHECK-GI-NEXT:    movi v0.8b, #127
+; CHECK-GI-NEXT:    addv b0, v0.8b
+; CHECK-GI-NEXT:    fmov w0, s0
+; CHECK-GI-NEXT:    ret
+  %sum = call i8 @llvm.vector.reduce.add.v8i8(<8 x i8> splat (i8 127))
+  ret i8 %sum
+}
+
+; Legalization may promote the scalar result; its added upper bits are unspecified.
+define i32 @reduce_add_promoted(<8 x i8> %x) {
+; CHECK-SD-LABEL: reduce_add_promoted:
+; CHECK-SD:       // %bb.0:
+; CHECK-SD-NEXT:    movi v1.8b, #7
+; CHECK-SD-NEXT:    and v0.8b, v0.8b, v1.8b
+; CHECK-SD-NEXT:    addv b0, v0.8b
+; CHECK-SD-NEXT:    fmov w8, s0
+; CHECK-SD-NEXT:    and w0, w8, #0x3f
+; CHECK-SD-NEXT:    ret
+;
+; CHECK-GI-LABEL: reduce_add_promoted:
+; CHECK-GI:       // %bb.0:
+; CHECK-GI-NEXT:    movi v1.8b, #7
+; CHECK-GI-NEXT:    and v0.8b, v0.8b, v1.8b
+; CHECK-GI-NEXT:    addv b0, v0.8b
+; CHECK-GI-NEXT:    fmov w8, s0
+; CHECK-GI-NEXT:    uxtb w0, w8
+; CHECK-GI-NEXT:    ret
+  %masked = and <8 x i8> %x, splat (i8 7)
+  %sum = call i8 @llvm.vector.reduce.add.v8i8(<8 x i8> %masked)
+  %result = zext i8 %sum to i32
+  ret i32 %result
+}
+
+; Looking only at the first lane would incorrectly remove this scalar mask.
+define i32 @reduce_add_different_lanes_keep_mask(<4 x i32> %x) {
+; CHECK-LABEL: reduce_add_different_lanes_keep_mask:
+; CHECK:       // %bb.0:
+; CHECK-NEXT:    adrp x8, .LCPI146_0
+; CHECK-NEXT:    ldr q1, [x8, :lo12:.LCPI146_0]
+; CHECK-NEXT:    and v0.16b, v0.16b, v1.16b
+; CHECK-NEXT:    addv s0, v0.4s
+; CHECK-NEXT:    fmov w8, s0
+; CHECK-NEXT:    and w0, w8, #0x7
+; CHECK-NEXT:    ret
+  %masked = and <4 x i32> %x, <i32 1, i32 3, i32 7, i32 15>
+  %sum = call i32 @llvm.vector.reduce.add.v4i32(<4 x i32> %masked)
+  %result = and i32 %sum, 7
+  ret i32 %result
+}

@@ -505,6 +505,30 @@ TEST_F(AArch64SelectionDAGTest, SimplifyDemandedBitsSVE) {
   EXPECT_EQ(Known.Zero, APInt(8, 0xAA));
 }
 
+TEST_F(AArch64SelectionDAGTest, ComputeKnownBits_VECREDUCE_ADD_Promoted) {
+  SDLoc Loc;
+  SDValue Input = DAG->getNode(ISD::FREEZE, Loc, MVT::v8i8,
+                               DAG->getUNDEF(MVT::v8i8));
+  SDValue Masked = DAG->getNode(ISD::AND, Loc, MVT::v8i8, Input,
+                                DAG->getConstant(7, Loc, MVT::v8i8));
+  SDValue Sum = DAG->getNode(ISD::VECREDUCE_ADD, Loc, MVT::i32, Masked);
+  KnownBits Known = DAG->computeKnownBits(Sum);
+  EXPECT_EQ(Known.Zero, APInt(32, 0xc0));
+  EXPECT_EQ(Known.One, APInt(32, 0));
+  EXPECT_TRUE(DAG->computeKnownBits(Sum, SelectionDAG::MaxRecursionDepth - 1)
+                  .isUnknown());
+}
+
+TEST_F(AArch64SelectionDAGTest, ComputeKnownBitsSVE_VECREDUCE_ADD) {
+  SDLoc Loc;
+  SDValue Input = DAG->getNode(ISD::FREEZE, Loc, MVT::nxv4i32,
+                               DAG->getUNDEF(MVT::nxv4i32));
+  SDValue Masked = DAG->getNode(ISD::AND, Loc, MVT::nxv4i32, Input,
+                                DAG->getConstant(255, Loc, MVT::nxv4i32));
+  SDValue Sum = DAG->getNode(ISD::VECREDUCE_ADD, Loc, MVT::i32, Masked);
+  EXPECT_TRUE(DAG->computeKnownBits(Sum).isUnknown());
+}
+
 // Piggy-backing on the AArch64 tests to verify SelectionDAG::computeKnownBits.
 TEST_F(AArch64SelectionDAGTest, ComputeKnownBits_ADD) {
   SDLoc Loc;
